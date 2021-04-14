@@ -20,7 +20,8 @@
   },
   "scripts": {
     "test": "jest --watch",
-    "build": "babel ./src/index.js -d dist"
+    "build": "babel ./src/index.js -d dist",
+    "prepack": "yarn build"
   },
   "jest": {
     "transform": {
