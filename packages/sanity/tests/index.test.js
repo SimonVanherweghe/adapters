@@ -13,17 +13,29 @@ const client = sanityClient({
 let session = null;
 let user = null;
 let verificationRequest = null;
-
-const docsToDelete = [];
+let account = null;
 
 const SECRET = "secret";
 const TOKEN = "token";
 
+const PROVIDERACCOUNTID = "providerAccountId";
+const PROVIDERID = "providerId";
+
 describe("adapter functions", () => {
-  beforeAll(() => {});
+  beforeAll(async () => {});
 
   afterAll(async () => {
-    Promise.all(docsToDelete.map((id) => client.delete(id)));
+    query = '*[_type == "account"]';
+    await client.delete({ query });
+
+    let query = '*[_type == "user"]';
+    await client.delete({ query });
+
+    query = '*[_type == "session"]';
+    await client.delete({ query });
+
+    query = '*[_type == "verificationrequest"]';
+    await client.delete({ query });
   });
   // User
 
@@ -41,9 +53,24 @@ describe("adapter functions", () => {
     expect(user.email).toMatchInlineSnapshot(`"test@next-auth.com"`);
     expect(user.name).toMatchInlineSnapshot(`"test"`);
     expect(user.image).toMatchInlineSnapshot(`"https://"`);
-
-    docsToDelete.push(user.id);
   });
+
+  test("createUser without email", async () => {
+    const adapter = await Adapter.Adapter({ client }).getAdapter({
+      appOptions: {},
+    });
+    const user2 = await adapter.createUser({
+      name: "No Mail",
+      image: "https://",
+    });
+
+    expect(user2.id).not.toBeNull();
+    expect(user2.email).toBeUndefined();
+    expect(user2.emailVerified).toBeUndefined();
+    expect(user2.name).toMatchInlineSnapshot(`"No Mail"`);
+    expect(user2.image).toMatchInlineSnapshot(`"https://"`);
+  });
+
   test("updateUser", async () => {
     const adapter = await Adapter.Adapter({ client }).getAdapter({
       appOptions: {},
@@ -57,6 +84,82 @@ describe("adapter functions", () => {
     expect(user.name).toEqual("Changed");
   });
 
+  test("getUser", async () => {
+    const adapter = await Adapter.Adapter({ client }).getAdapter({
+      appOptions: {},
+    });
+    if (!user) throw new Error("No User Available");
+
+    const expUser = await adapter.getUser(user.id);
+    expect(user.id).toBe(expUser.id);
+  });
+
+  test("getUserByEmail", async () => {
+    const adapter = await Adapter.Adapter({ client }).getAdapter({
+      appOptions: {},
+    });
+    if (!user) throw new Error("No User Available");
+
+    const expUser = await adapter.getUserByEmail("test@next-auth.com");
+    expect(user.id).toBe(expUser.id);
+  });
+
+  test("linkAccount", async () => {
+    const adapter = await Adapter.Adapter({ client }).getAdapter({
+      appOptions: {},
+    });
+    if (!user) throw new Error("No User Available");
+
+    account = await adapter.linkAccount(
+      user.id,
+      PROVIDERID,
+      "2",
+      PROVIDERACCOUNTID,
+      "refresh",
+      "access",
+      new Date()
+    );
+    expect(account.userId).toBe(user.id);
+    expect(account.providerId).toBe(PROVIDERID);
+    expect(account.providerType).toBe("2");
+    expect(account.providerAccountId).toBe(PROVIDERACCOUNTID);
+    expect(account.refreshToken).toBe("refresh");
+    expect(account.accessToken).toBe("access");
+  });
+
+  test("getUserByProvider", async () => {
+    const adapter = await Adapter.Adapter({ client }).getAdapter({
+      appOptions: {},
+    });
+    const expUser = await adapter.getUserByProviderAccountId(
+      PROVIDERID,
+      PROVIDERACCOUNTID
+    );
+    expect(expUser.id).toEqual(user.id);
+  });
+
+  test("getUserByProvider without match should return null", async () => {
+    const adapter = await Adapter.Adapter({ client }).getAdapter({
+      appOptions: {},
+    });
+    const expUser = await adapter.getUserByProviderAccountId("foo", "bar");
+    expect(expUser).toBeNull();
+  });
+
+  test("unlink account", async () => {
+    const adapter = await Adapter.Adapter({ client }).getAdapter({
+      appOptions: {},
+    });
+    if (!account) throw new Error("No User Available");
+
+    const result = await adapter.unlinkAccount(
+      account.userId,
+      account.providerId,
+      account.providerAccountId
+    );
+    expect(result.accessTokenExpires).toEqual(account.accessTokenExpires);
+  });
+
   // Sessions
   test("createSession", async () => {
     const adapter = await Adapter.Adapter({ client }).getAdapter({
@@ -64,16 +167,13 @@ describe("adapter functions", () => {
     });
     if (!user) throw new Error("No User Available");
 
-    session = await adapter.createSession({
-      id: user.id,
-    });
+    session = await adapter.createSession(user);
 
     expect(session.sessionToken.length).toMatchInlineSnapshot(`64`);
     expect(session.accessToken.length).toMatchInlineSnapshot(`64`);
-    expect(session.userId).toEqual(user.id);
-
-    docsToDelete.push(session.id);
+    expect(session.user).not.toBeNull();
   });
+
   test("getSession", async () => {
     const adapter = await Adapter.Adapter({ client }).getAdapter({
       appOptions: {},
@@ -84,7 +184,7 @@ describe("adapter functions", () => {
 
     expect(result.sessionToken).toEqual(session.sessionToken);
     expect(result.accessToken).toEqual(session.accessToken);
-    expect(result.userId).toEqual(user.id);
+    expect(result.user.id).toEqual(user.id);
   });
   test("updateSession", async () => {
     const maxAge = 30 * 24 * 60 * 60;
@@ -132,8 +232,6 @@ describe("adapter functions", () => {
     );
     expect(verificationRequest.id).not.toBeNull();
     expect(verificationRequest.identifier).toEqual("any");
-
-    docsToDelete.push(verificationRequest.id);
   });
 
   test("getVerificationRequest", async () => {

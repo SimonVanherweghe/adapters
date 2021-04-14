@@ -24,21 +24,15 @@ const Adapter = (config, options = {}) => {
     async function createUser(profile) {
       _debug("createUser", profile);
 
-      const {
-        name = "",
-        username = "",
-        email = "",
-        image = "",
-        emailverified = "",
-      } = profile;
-
       const user = {
         _type: "user",
-        name,
-        username,
-        email,
-        image,
-        emailverified,
+        ...(profile.name !== null && { name: profile.name }),
+        ...(profile.username !== null && { username: profile.username }),
+        ...(profile.email !== null && { email: profile.email }),
+        ...(profile.image !== null && { image: profile.image }),
+        ...(profile.emailverified !== null && {
+          emailverified: profile.emailverified,
+        }),
       };
 
       try {
@@ -54,17 +48,53 @@ const Adapter = (config, options = {}) => {
 
     async function getUser(id) {
       _debug("getUser", id);
-      return null;
+
+      try {
+        const user = await client.getDocument(id);
+        user.id = user._id;
+
+        return user;
+      } catch (error) {
+        console.error("GET_USER_ERROR", error);
+        return Promise.reject(new Error("GET_USER_ERROR"));
+      }
     }
 
     async function getUserByEmail(email) {
       _debug("getUserByEmail", email);
-      return null;
+
+      const query = '*[_type == "user" && email == $email][0]';
+      const params = { email };
+      try {
+        const user = await client.fetch(query, params);
+        user.id = user._id;
+
+        return user;
+      } catch (error) {
+        console.error("GET_USERBYEMAIL_ERROR", error);
+        return Promise.reject(new Error("GET_USERBYEMAIL_ERROR"));
+      }
     }
 
     async function getUserByProviderAccountId(providerId, providerAccountId) {
       _debug("getUserByProviderAccountId", providerId, providerAccountId);
-      return null;
+
+      const query =
+        '*[_type == "account" && providerId == $providerId && providerAccountId==$providerAccountId ][0] {user->}';
+      const params = { providerId, providerAccountId };
+      try {
+        const result = await client.fetch(query, params);
+        if (!result) {
+          return null;
+        }
+        const { user } = result;
+        user.id = user._id;
+
+        return user;
+      } catch (error) {
+        console.error("GET_USERBYPROVIDER_ERROR", error);
+        return Promise.reject(new Error("GET_USERBYPROVIDER_ERROR"));
+      }
     }
 
     async function updateUser(user) {
@@ -116,10 +146,11 @@ const Adapter = (config, options = {}) => {
 
       const account = {
         _type: "account",
+        user: { _ref: userId, _type: "reference" },
         userId: userId,
         providerId: providerId,
         providerType: providerType,
-        providerAccountId: providerAccountId,
+        providerAccountId: "" + providerAccountId,
         refreshToken: refreshToken,
         accessToken: accessToken,
         accessTokenExpires: accessTokenExpires || "",
@@ -135,7 +166,22 @@ const Adapter = (config, options = {}) => {
 
     async function unlinkAccount(userId, providerId, providerAccountId) {
       _debug("unlinkAccount", userId, providerId, providerAccountId);
-      return null;
+      try {
+        const query =
+          '*[_type == "account" && providerId == $providerId && providerAccountId==$providerAccountId ][0]';
+        const params = { providerId, providerAccountId };
+
+        const account = await client.fetch(query, params);
+        const res = await client.delete(account._id);
+
+        if (!res.results) {
+          return null;
+        }
+        return res.results[0].document;
+      } catch (error) {
+        console.error("UNLINK_ACCOUNT_ERROR", error);
+        return Promise.reject(new Error("UNLINK_ACCOUNT_ERROR"));
+      }
     }
 
     async function createSession(user) {
@@ -150,6 +196,7 @@ const Adapter = (config, options = {}) => {
 
       const sessionDoc = {
         _type: "session",
+        user: { _ref: user.id, _type: "reference" },
         userId: user.id,
         expires: expires,
         sessionToken: randomBytes(32).toString("hex"),
@@ -173,7 +220,8 @@ const Adapter = (config, options = {}) => {
     async function getSession(sessionToken) {
       _debug("getSession", sessionToken);
 
-      const query = '*[_type == "session" && sessionToken == $sessionToken][0]';
+      const query =
+        '*[_type == "session" && sessionToken == $sessionToken][0] {..., user->{..., "id": _id}}';
       const params = { sessionToken };
       try {
         const session = client.fetch(query, params);
@@ -278,7 +326,7 @@ const Adapter = (config, options = {}) => {
       provider
     ) {
       _debug("createVerificationRequest", identifier);
-      const { baseUrl } = appOptions?.baseUrl ?? "";
+      const { baseUrl } = appOptions.baseUrl ? appOptions.baseUrl : "";
       const { sendVerificationRequest, maxAge } = provider;
 
       // Store hashed token (using secret as salt) so that tokens cannot be exploited
