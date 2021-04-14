@@ -1,0 +1,3 @@
+# Sanity Adapter
+
+## Schema
